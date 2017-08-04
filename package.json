@@ -1,0 +1,44 @@
+{
+  "name": "midi2mqtt",
+  "version": "1.0.0",
+  "description": "Converts MIDI input to MQTT messages for use in a home automation interactive display.",
+  "main": "server.js",
+  "dependencies": {
+    "body-parser": "^1.17.2",
+    "dotenv": "^4.0.0",
+    "express": "^4.15.3",
+    "express-generator": "^4.15.0",
+    "jquery": "^3.2.1",
+    "midiutils": "^0.0.4",
+    "mqtt": "^2.11.0",
+    "reload": "^2.2.0",
+    "stdout": "^0.0.3",
+    "through2": "^2.0.3",
+    "util": "^0.10.3",
+    "web-midi": "^2.0.1",
+    "web-midi-note-stream": "^1.0.0",
+    "webmidi": "^2.0.0-rc.5"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/donkawechico/node-midi-2-mqtt.git"
+  },
+  "keywords": [
+    "midi",
+    "mqtt",
+    "node",
+    "iot",
+    "homeautomation"
+  ],
+  "author": "Donnie Karns",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/donkawechico/node-midi-2-mqtt/issues"
+  },
+  "homepage": "https://github.com/donkawechico/node-midi-2-mqtt#readme"
+}
