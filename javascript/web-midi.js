@@ -13,7 +13,7 @@ WebMidi.enable(function (err) {
     input.addListener('noteon', "all", function(e) {
         $.ajax(
           {
-            url: '/mqtt/noteon', 
+            url: '/mqtt/turnon', 
             type: 'POST', 
             contentType: 'application/json', 
             data: JSON.stringify({note: { number: e.note.number, name: e.note.name, octave: e.note.octave } })
@@ -21,19 +21,17 @@ WebMidi.enable(function (err) {
         );
         console.log("Note on: " + e.note.number + " " + e.note.name + " " + e.note.octave);
     });
-
     input.addListener('noteoff', "all", function(e) {
         $.ajax(
           {
-            url: '/mqtt/noteoff', 
+            url: '/mqtt/turnoff', 
             type: 'POST', 
             contentType: 'application/json', 
             data: JSON.stringify({note: { number: e.note.number, name: e.note.name, octave: e.note.octave } })
           }
         );
-        console.log("Note off: " + e.note.name);
+        console.log("Note off: " + e.note.number + " " + e.note.name + " " + e.note.octave);
     });
-
     input.addListener('pitchbend', "all", function (e) {
         $.ajax(
           {
