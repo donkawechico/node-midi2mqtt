@@ -15,28 +15,84 @@ mqtt_client  = mqtt.connect(mqtt_uri);
 mqtt_client.publish("midi2mqtt","Connected");
 
 currentlyOn = new Set();
+allLights = new Set();
 
 function AiLight(zone, name) {
-
 	this.name = name;
 	this.zone = zone;
+
+	allLights.add(this);
 
 	this.mqtt_base_topic = util.format('home/%s/light/%s', this.zone, this.name);
 	this.mqtt_set_topic = util.format('%s/set', this.mqtt_base_topic);
 
-	this.turn_on = function() {
-		console.log("turning on " + this.name);
-		currentlyOn.add(this);
-		mqtt_client.publish(this.mqtt_set_topic, "{'state':'ON'}");
+	var currentState = new NormalLight(this);
+
+	this.setState = function(state) {
+		currentState = state;
+		currentState.go();
+	}
+
+	this.turn_on = function(brightness) {
+		this.setState(new OnLight(this));
+	}
+
+	this.turn_off = function() {
+		currentState.turn_off();
+	}
+
+	this.setBrightness = function(brightness) {
+		currentState.setBrightness(brightness);
+	}
+
+	this.setColorTemperature = function(temp) {
+		currentState.setColorTemperature(temp);
+	}
+}
+
+function HoldLight(light) {
+	this.light = light;
+
+	this.turn_on = function(brightness) {
+		console.log("turning on " + light.name);
+		mqtt_client.publish(light.mqtt_set_topic, "{'state':'ON','brightness':" + brightness + "}");
+		currentlyOn.add(light);
 	}
 	this.turn_off = function() {
-		console.log("turning off " + this.name);
-		currentlyOn.delete(this);
-		mqtt_client.publish(this.mqtt_set_topic, "{'state':'OFF'}");
+		console.log("Not turning off because light is now a 'Hold' light");
 	}
 	this.setBrightness = function(brightness) {
-		mqtt_client.publish(this.mqtt_set_topic, "{'brightness':'" + brightness + "'}");
-		console.log("setting brightness of " + this.name + " to " + brightness);
+		mqtt_client.publish(light.mqtt_set_topic, "{'brightness':'" + brightness + "'}");
+		console.log("setting brightness of " + light.name + " to " + brightness);
+	}
+	this.setColorTemperature = function(temp) {
+		mqtt_client.publish(light.mqtt_set_topic, "{'color_temp':'" + temp + "'}");
+		console.log("setting color temperature of " + light.name + " to " + temp);
+	}
+}
+
+
+
+function OnLight(light) {
+	this.light = light;
+
+	this.turn_on = function(brightness) {
+		console.log("turning on " + light.name);
+		mqtt_client.publish(light.mqtt_set_topic, "{'state':'ON','brightness':" + brightness + "}");
+		currentlyOn.add(light);
+	}
+	this.turn_off = function() {
+		console.log("turning off " + light.name);
+		mqtt_client.publish(light.mqtt_set_topic, "{'state':'OFF'}");
+		currentlyOn.delete(light);
+	}
+	this.setBrightness = function(brightness) {
+		mqtt_client.publish(light.mqtt_set_topic, "{'brightness':'" + brightness + "'}");
+		console.log("setting brightness of " + light.name + " to " + brightness);
+	}
+	this.setColorTemperature = function(temp) {
+		mqtt_client.publish(light.mqtt_set_topic, "{'color_temp':'" + temp + "'}");
+		console.log("setting color temperature of " + light.name + " to " + temp);
 	}
 }
 
@@ -50,21 +106,49 @@ function AiLights() {
 	this.EntryUmbrella = new AiLight("entry","umbrella");
 
 	this.lightForNote = function(note) {
-		console.log(note);
+		console.log("lightfornote: " + note);
 		switch (note) {
-			case "C": return this.Orb;
-			case "D": return this.KitchenGasCanMain;
+			case "C":
+			case "C#": return this.Orb;
+			case "D": 
+			case "D#": return this.KitchenGasCanMain;
 			case "E": return this.KitchenGasCanNozzle;
-			case "F": return this.LivingRoomSculpture;
-			case "G": return this.LivingRoomGasCan;
-			case "A": return this.ShopGasCan;
+			case "F": 
+			case "F#": return this.LivingRoomSculpture;
+			case "G": 
+			case "G#": return this.LivingRoomGasCan;
+			case "A": 
+			case "A#": return this.ShopGasCan;
 			case "B": return this.EntryUmbrella;
 		}
 	}
 
+	this.setTempForOnLights = function(temp) {
+		currentlyOn.forEach(function(light) {
+			light.setColorTemperature(temp);
+		});
+	}
 	this.setBrightnessForOnLights = function(brightness) {
 		currentlyOn.forEach(function(light) {
 			light.setBrightness(brightness);
+		});
+	}
+
+	this.turnOffAllLights = function() {
+		currentlyOn.forEach(function(light) {
+			light.turn_off();
+		});
+	}
+
+	this.setAllLightsToHoldLights = function() {
+		allLights.forEach(function(light) {
+			light.setState(new HoldLight(light));
+		});
+	}
+
+	this.setAllLightsToNormalLights = function() {
+		allLights.forEach(function(light) {
+			light.setState(new NormalLight(light));
 		});
 	}
 
