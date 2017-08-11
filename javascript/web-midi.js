@@ -8,55 +8,79 @@ WebMidi.enable(function (err) {
     console.log(WebMidi.inputs);
     console.log(WebMidi.outputs);
 
-    var input = WebMidi.getInputByName("KeyStudio");
-    //var input = WebMidi.getInputByName("VMPK Output");
-    
+    var load_midi = document.getElementById("loadmidi");
 
-    input.addListener('noteon', "all", function(e) {
-        console.log("Note on: " + e.note.number + " " + e.note.name + " " + e.note.octave + " " + e.velocity);
-        $.ajax(
-          {
-            url: '/mqtt/turnon', 
-            type: 'POST', 
-            contentType: 'application/json', 
-            data: JSON.stringify({note: { number: e.note.number, name: e.note.name, octave: e.note.octave, velocity: e.velocity } })
-          }
+    load_midi.addEventListener('click', function(e) {
+       console.log("Clicked on button"); 
+       $.ajax(
+              {
+                url: '/mqtt/loadmidi', 
+                type: 'POST', 
+                contentType: 'application/json', 
+                data: JSON.stringify({midi_path: "./bohemian_rhapsody.mid"})
+              }
         );
-        
     });
-    input.addListener('noteoff', "all", function(e) {
+    channel = "1";
+    //var input = WebMidi.getInputByName("KeyStudio");
+    var input = WebMidi.getInputByName("IAC Driver Bus 1");
+    callEndpoint = function(endpoint, data) {
         $.ajax(
-          {
-            url: '/mqtt/turnoff', 
+        {
+            url: endpoint, 
             type: 'POST', 
             contentType: 'application/json', 
-            data: JSON.stringify({note: { number: e.note.number, name: e.note.name, octave: e.note.octave, velocity: e.velocity } })
+            data: JSON.stringify(data)
           }
         );
+    }
 
-        console.log("Note off: " + e.note.number + " " + e.note.name + " " + e.note.octave + " " + e.velocity);
-    });
-    input.addListener('pitchbend', "all", function (e) {
-        $.ajax(
-          {
-            url: '/mqtt/pitchbend', 
-            type: 'POST', 
-            contentType: 'application/json', 
-            data: JSON.stringify({bend_value:e.value})
-          }
-        );
-      console.log("Pitchbend value: ", e.value);
-    });
+    if (input) {
+        input.addListener('noteon', channel, function(e) {
+            console.log("Note on: " + e.note.number + " " + e.note.name + " " + e.note.octave + " " + e.velocity);
+            $.ajax(
+              {
+                url: '/mqtt/turnon', 
+                type: 'POST', 
+                contentType: 'application/json', 
+                data: JSON.stringify({note: { number: e.note.number, name: e.note.name, octave: e.note.octave, velocity: e.velocity } })
+              }
+            );
+        });
+        input.addListener('noteoff', channel, function(e) {
+            $.ajax(
+              {
+                url: '/mqtt/turnoff', 
+                type: 'POST', 
+                contentType: 'application/json', 
+                data: JSON.stringify({note: { number: e.note.number, name: e.note.name, octave: e.note.octave, velocity: e.velocity } })
+              }
+            );
 
-    input.addListener('controlchange', "all", function (e) {
-        $.ajax(
-          {
-            url: '/mqtt/controlchange', 
-            type: 'POST', 
-            contentType: 'application/json', 
-            data: JSON.stringify({control:e})
-          }
-        );
-      console.log("Control changed: ", e);
-    });
+            console.log("Note off: " + e.note.number + " " + e.note.name + " " + e.note.octave + " " + e.velocity);
+        });
+        input.addListener('pitchbend', channel, function (e) {
+            $.ajax(
+              {
+                url: '/mqtt/pitchbend', 
+                type: 'POST', 
+                contentType: 'application/json', 
+                data: JSON.stringify({bend_value:e.value})
+              }
+            );
+          console.log("Pitchbend value: ", e.value);
+        });
+
+        input.addListener('controlchange', channel, function (e) {
+            $.ajax(
+              {
+                url: '/mqtt/controlchange', 
+                type: 'POST', 
+                contentType: 'application/json', 
+                data: JSON.stringify({control:e})
+              }
+            );
+          console.log("Control changed: ", e);
+        });
+    }
 });
