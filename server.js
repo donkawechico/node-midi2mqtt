@@ -2,13 +2,15 @@ require('dotenv').config()
 const express = require('express')
 const app = express()
 const path = require('path')
-var testing = require("./ai_light");
+var AiLights = require("./ai_light");
 var bodyParser = require('body-parser');
-
+var noteStream = require("web-midi-note-stream");
+var midiStream = require('web-midi');
+var stdout = require("stdout");
+ 
 var api_call_count = 0;
 
-lights = new testing();
-holdNote = false;
+lights = new AiLights();
 
 app.use(bodyParser.urlencoded({ extended: true })); 
 app.use(bodyParser.json())
@@ -27,11 +29,20 @@ app.get('/', function (req, res) {
     res.sendFile(path.join(__dirname + '/index.html'));
 })
 
+app.post('/mqtt/loadmidi', function(req, res) {
+    // Listen to all button presses, parse them, log to console 
+    midiStream("Launchpad")
+        .pipe(noteStream())
+        .pipe(stdout("Note:"));
+
+    res.send('Turning on ' + light.name + 'from note ' + req.body.note.name);
+});
+
 app.post('/mqtt/turnon', function(req, res) {
     light = lights.lightForNote(req.body.note.name);
     brightness=Math.round(req.body.note.velocity.map(0,1,0,255));
-    light.readyToTurnOn = true;
     light.turn_on(brightness);
+
     res.send('Turning on ' + light.name + 'from note ' + req.body.note.name);
 });
 
@@ -47,10 +58,10 @@ app.post('/mqtt/pitchbend', function(req, res) {
 
     var brightness = Math.round(bend_value * 255);
 
-    if (api_call_count++%5==0 || raw_value == 0.0 || Math.abs(raw_value) > 0.95) { 
-        lights.setBrightnessForOnLights(brightness);
-        api_call_count = 1;
-    }
+    // if (api_call_count++%5==0 || raw_value == 0.0 || Math.abs(raw_value) > 0.95) { 
+    //     lights.setBrightnessForOnLights(brightness);
+    //     api_call_count = 1;
+    // }
 
     res.send('Pitch value found: "' + brightness + '".');
 });
@@ -61,20 +72,23 @@ app.post('/mqtt/controlchange', function(req, res) {
     var mapped_value = Math.round(raw_value.map(0,127,154,500));
     console.log("mapped value in control change: " + mapped_value);
     switch (controlName) {
-        case "volumecoarse": 
-            lights.setTempForOnLights(mapped_value); 
-            break;
-        case "modulationwheelcoarse": 
-            //lights.set
-            break;
+        // case "volumecoarse": 
+        //     lights.setTempForOnLights(mapped_value); 
+        //     break;
+        // case "modulationwheelcoarse": 
+        //     //lights.set
+        //     break;
         case "holdpedal": 
             if (parseInt(req.body.control.value) > 0) {
+                lights.setPedalState(true);
                 console.log("Pedal depressed");
-                lights.setAllLightsToHoldLights();
+                //lights.setAllLightsToHoldLights();
             } else {
+                lights.setPedalState(false);
+                lights.turnOffAllPendingOffLights();
                 console.log("Pedal released");
-                lights.setAllLightsToNormalLights();
-                lights.turnOffAllLights();
+                // lights.setAllLightsToNormalLights();
+                // lights.turnOffAllLights();
             }
                 
             break;
