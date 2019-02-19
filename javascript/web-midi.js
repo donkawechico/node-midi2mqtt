@@ -22,8 +22,10 @@ WebMidi.enable(function (err) {
         );
     });
     channel = "1";
-    //var input = WebMidi.getInputByName("KeyStudio");
-    var input = WebMidi.getInputByName("IAC Driver Bus 1");
+    // var input = WebMidi.getInputByName("KeyStudio");
+    // var input = WebMidi.getInputByName("IAC Driver Bus 1");
+    // var input = WebMidi.getInputByName("IAC Driver Output");
+    var input = WebMidi.getInputByName("IAC Driver IAC Bus 2");
     callEndpoint = function(endpoint, data) {
         $.ajax(
         {
