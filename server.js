@@ -7,7 +7,14 @@ var bodyParser = require('body-parser');
 var noteStream = require("web-midi-note-stream");
 var midiStream = require('web-midi');
 var stdout = require("stdout");
- 
+var MidiPlayer = require('midi-player-js');
+
+ // Initialize player and register event handler
+var Player = new MidiPlayer.Player(function(event) {
+	console.log(event);
+});
+
+
 var api_call_count = 0;
 
 lights = new AiLights();
@@ -31,9 +38,12 @@ app.get('/', function (req, res) {
 
 app.post('/mqtt/loadmidi', function(req, res) {
     // Listen to all button presses, parse them, log to console 
-    midiStream("Launchpad")
-        .pipe(noteStream())
-        .pipe(stdout("Note:"));
+    // midiStream("Launchpad")
+    //     .pipe(noteStream())
+    //     .pipe(stdout("Note:"));
+    midifile = req.body.midi_path;
+    Player.loadFile(midifile);
+    Player.play();
 
     res.send('Turning on ' + light.name + 'from note ' + req.body.note.name);
 });

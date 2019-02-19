@@ -4,14 +4,15 @@
   "description": "Converts MIDI input to MQTT messages for use in a home automation interactive display.",
   "main": "server.js",
   "dependencies": {
-    "body-parser": "^1.17.2",
+    "body-parser": "^1.18.3",
     "dotenv": "^4.0.0",
-    "express": "^4.15.3",
+    "express": "^4.16.4",
     "express-generator": "^4.15.0",
     "jquery": "^3.2.1",
+    "midi-player-js": "^2.0.5",
     "midiutils": "^0.0.4",
-    "mqtt": "^2.11.0",
-    "reload": "^2.2.0",
+    "mqtt": "^2.18.8",
+    "reload": "^2.4.0",
     "stdout": "^0.0.3",
     "through2": "^2.0.3",
     "util": "^0.10.3",
@@ -19,7 +20,6 @@
     "web-midi-note-stream": "^1.0.0",
     "webmidi": "^2.0.0-rc.5"
   },
-  "devDependencies": {},
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
