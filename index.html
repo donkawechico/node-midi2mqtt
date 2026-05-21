@@ -1,10 +1,1097 @@
-<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>midi → mqtt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:ital,wght@0,300;0,400;0,700;1,300&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg:          #0b0905;
+            --surface:     #131109;
+            --panel:       #1b1710;
+            --border:      #2c2518;
+            --border-hi:   #3d3420;
+            --amber:       #f0a800;
+            --amber-dim:   #6b4a00;
+            --amber-glow:  rgba(240,168,0,0.10);
+            --amber-glow2: rgba(240,168,0,0.25);
+            --cream:       #f0e6cc;
+            --muted:       #7a6c50;
+            --active:      #ffc740;
+            --active-glow: rgba(255,199,64,0.40);
+            --green:       #4a8a50;
+            --red:         #8a3a3a;
+        }
+
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--cream);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ── Grain texture overlay ── */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0.35;
+        }
+
+        /* ── Header ── */
+        header {
+            flex-shrink: 0;
+            height: 52px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 1.5rem;
+            gap: 1.5rem;
+            background: var(--surface);
+        }
+
+        .wordmark {
+            font-family: 'Bebas Neue', cursive;
+            font-size: 1.75rem;
+            letter-spacing: 0.08em;
+            color: var(--amber);
+            line-height: 1;
+        }
+
+        .wordmark .arrow {
+            color: var(--muted);
+            font-size: 1.4rem;
+            margin: 0 0.1em;
+        }
+
+        .header-divider {
+            width: 1px;
+            height: 20px;
+            background: var(--border);
+        }
+
+        .status-row {
+            display: flex;
+            gap: 0.6rem;
+            margin-left: auto;
+        }
+
+        .pill {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 0.6rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 0.22rem 0.6rem 0.22rem 0.45rem;
+            border-radius: 2px;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            transition: all 0.25s;
+        }
+
+        .pill .dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--muted);
+            flex-shrink: 0;
+            transition: all 0.25s;
+        }
+
+        .pill.ok    { border-color: var(--amber-dim); color: var(--amber); }
+        .pill.ok .dot { background: var(--amber); box-shadow: 0 0 5px var(--amber); animation: pulse 2s ease-in-out infinite; }
+        .pill.err   { border-color: var(--red); color: #d06060; }
+        .pill.err .dot { background: #d06060; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.4; }
+        }
+
+        /* ── Main layout ── */
+        .main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            min-height: 0;
+        }
+
+        /* ── Left column ── */
+        .left-col {
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--border);
+            min-height: 0;
+        }
+
+        /* ── Light grid ── */
+        .lights-area {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+        }
+
+        .section-label {
+            font-size: 0.55rem;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 1rem;
+        }
+
+        .lights-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+            gap: 0.65rem;
+        }
+
+        .light-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 1rem 0.9rem 0.8rem;
+            position: relative;
+            overflow: hidden;
+            cursor: default;
+            transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
+        }
+
+        .light-card::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: var(--border-hi);
+            transition: background 0.18s, box-shadow 0.18s;
+        }
+
+        .light-card.on {
+            border-color: var(--amber-dim);
+            background: linear-gradient(160deg, #1d1608 0%, var(--surface) 65%);
+            box-shadow: 0 0 18px rgba(240,168,0,0.07), inset 0 0 40px rgba(240,168,0,0.03);
+        }
+
+        .light-card.on::after {
+            background: var(--amber);
+            box-shadow: 0 0 10px var(--amber), 0 0 20px var(--amber-glow);
+        }
+
+        .bulb-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 1.5px solid var(--border-hi);
+            margin-bottom: 0.7rem;
+            background: var(--panel);
+            transition: all 0.18s;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .bulb-icon::before {
+            content: '';
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--border-hi);
+            transition: all 0.18s;
+        }
+
+        .light-card.on .bulb-icon {
+            border-color: var(--amber);
+            background: radial-gradient(circle, #fff8d0 0%, var(--active) 45%, var(--amber) 100%);
+            box-shadow: 0 0 14px var(--active-glow), 0 0 30px var(--amber-glow2);
+        }
+
+        .light-card.on .bulb-icon::before {
+            background: #fffae8;
+            box-shadow: 0 0 6px #fff;
+        }
+
+        .card-zone {
+            font-size: 0.5rem;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 0.15rem;
+        }
+
+        .card-name {
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: var(--cream);
+            line-height: 1.2;
+            transition: color 0.18s;
+        }
+
+        .light-card.on .card-name { color: var(--active); }
+
+        .card-notes {
+            margin-top: 0.45rem;
+            font-size: 0.55rem;
+            color: var(--muted);
+            font-style: italic;
+            letter-spacing: 0.05em;
+        }
+
+        .card-brightness {
+            position: absolute;
+            bottom: 0.6rem;
+            right: 0.7rem;
+            font-size: 0.58rem;
+            font-weight: 700;
+            color: var(--amber);
+            opacity: 0;
+            transition: opacity 0.18s;
+        }
+
+        .light-card.on .card-brightness { opacity: 1; }
+
+        /* ── Piano keyboard strip ── */
+        .keyboard-strip {
+            flex-shrink: 0;
+            border-top: 1px solid var(--border);
+            padding: 1rem 1.5rem;
+            background: var(--surface);
+        }
+
+        .piano {
+            position: relative;
+            height: 64px;
+            display: flex;
+            gap: 3px;
+        }
+
+        .key-white {
+            flex: 1;
+            background: var(--panel);
+            border: 1px solid var(--border-hi);
+            border-radius: 0 0 3px 3px;
+            position: relative;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 5px;
+            font-size: 0.48rem;
+            letter-spacing: 0.05em;
+            color: var(--muted);
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.06s, border-color 0.06s, box-shadow 0.06s;
+        }
+
+        .key-white.active {
+            background: var(--amber);
+            border-color: var(--amber);
+            color: var(--bg);
+            box-shadow: 0 0 12px var(--amber-glow2);
+        }
+
+        .piano-blacks {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 40px;
+            pointer-events: none;
+        }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .controls-panel {
+            flex-shrink: 0;
+            padding: 1.25rem 1.25rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .ctrl-group {
+            margin-bottom: 1rem;
+        }
+
+        .ctrl-group:last-child { margin-bottom: 0; }
+
+        label {
+            display: block;
+            font-size: 0.55rem;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 0.35rem;
+        }
+
+        select,
+        input[type="text"] {
+            width: 100%;
+            background: var(--surface);
+            border: 1px solid var(--border-hi);
+            border-radius: 2px;
+            color: var(--cream);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.68rem;
+            padding: 0.42rem 0.6rem;
+            outline: none;
+            appearance: none;
+            -webkit-appearance: none;
+            transition: border-color 0.15s;
+        }
+
+        select:focus,
+        input[type="text"]:focus {
+            border-color: var(--amber-dim);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 0.45rem 0.75rem;
+            background: transparent;
+            border: 1px solid var(--border-hi);
+            border-radius: 2px;
+            color: var(--cream);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.6rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+
+        .btn:hover {
+            border-color: var(--amber);
+            color: var(--amber);
+            background: var(--amber-glow);
+        }
+
+        .btn:active { transform: scale(0.98); }
+
+        .btn.primary {
+            border-color: var(--amber-dim);
+            color: var(--amber);
+            background: var(--amber-glow);
+        }
+
+        .btn.primary:hover { background: var(--amber-glow2); }
+
+        /* ── Log panel ── */
+        .log-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .log-header {
+            flex-shrink: 0;
+            padding: 0.7rem 1.25rem 0.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .log-clear-btn {
+            background: none;
+            border: none;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.55rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+        .log-clear-btn:hover { color: var(--amber); }
+
+        .log-entries {
+            flex: 1;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+
+        .log-entry {
+            padding: 0.28rem 1.25rem;
+            display: grid;
+            grid-template-columns: 58px 1fr;
+            gap: 0.5rem;
+            font-size: 0.6rem;
+            line-height: 1.55;
+            border-bottom: 1px solid rgba(44,37,24,0.6);
+            animation: entryIn 0.15s ease;
+        }
+
+        @keyframes entryIn {
+            from { opacity: 0; transform: translateX(6px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+
+        .log-time { color: var(--muted); }
+        .log-msg  { color: var(--cream); opacity: 0.75; word-break: break-all; }
+        .log-msg.on  { color: var(--amber); opacity: 1; }
+        .log-msg.off { color: var(--muted); }
+        .log-msg.sys { color: var(--green); }
+        .log-msg.err { color: #d06060; }
+
+        /* ── Pedal indicator ── */
+        .pedal-bar {
+            flex-shrink: 0;
+            border-top: 1px solid var(--border);
+            padding: 0.6rem 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.55rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .pedal-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            border: 1px solid var(--muted);
+            flex-shrink: 0;
+            transition: all 0.1s;
+        }
+
+        .pedal-dot.active {
+            background: var(--amber);
+            border-color: var(--amber);
+            box-shadow: 0 0 6px var(--amber);
+        }
+
+        /* ── Label row (with help icon) ── */
+        .label-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.55rem;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 0.35rem;
+        }
+
+        .help-btn {
+            width: 13px;
+            height: 13px;
+            border-radius: 50%;
+            border: 1px solid var(--muted);
+            background: none;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.48rem;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            padding: 0;
+            letter-spacing: 0;
+            text-transform: none;
+            transition: border-color 0.15s, color 0.15s, background 0.15s, box-shadow 0.15s;
+        }
+
+        .help-btn:hover,
+        .help-btn.active {
+            border-color: var(--amber);
+            color: var(--amber);
+            background: var(--amber-glow);
+            box-shadow: 0 0 6px var(--amber-glow2);
+        }
+
+        /* ── Help popover ── */
+        .help-popover {
+            position: fixed;
+            z-index: 500;
+            width: 252px;
+            background: #161210;
+            border: 1px solid var(--amber-dim);
+            border-radius: 3px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.7), 0 0 0 1px rgba(240,168,0,0.04);
+            overflow: hidden;
+            animation: popIn 0.14s ease;
+        }
+
+        @keyframes popIn {
+            from { opacity: 0; transform: translateY(-5px) scale(0.98); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .help-popover[hidden] { display: none; }
+
+        .help-accent { height: 2px; background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+
+        .help-body { padding: 0.85rem 0.95rem 0.9rem; position: relative; }
+
+        .help-title {
+            font-family: 'Bebas Neue', cursive;
+            font-size: 1rem;
+            letter-spacing: 0.1em;
+            color: var(--amber);
+            margin-bottom: 0.6rem;
+            line-height: 1;
+        }
+
+        .help-section {
+            font-size: 0.5rem;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin: 0.65rem 0 0.3rem;
+        }
+
+        .help-note {
+            font-size: 0.59rem;
+            color: var(--cream);
+            opacity: 0.65;
+            line-height: 1.55;
+            letter-spacing: 0.02em;
+            text-transform: none;
+        }
+
+        .help-steps {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .help-steps li {
+            font-size: 0.59rem;
+            color: var(--cream);
+            opacity: 0.8;
+            line-height: 1.5;
+            padding: 0.22rem 0 0.22rem 1.2rem;
+            position: relative;
+            letter-spacing: 0.02em;
+            text-transform: none;
+            border-bottom: 1px solid rgba(44,37,24,0.5);
+        }
+
+        .help-steps li:last-child { border-bottom: none; }
+
+        .help-steps li::before {
+            content: attr(data-n);
+            position: absolute;
+            left: 0;
+            color: var(--amber);
+            font-weight: 700;
+            font-size: 0.55rem;
+        }
+
+        .help-steps li kbd {
+            background: var(--panel);
+            border: 1px solid var(--border-hi);
+            border-radius: 2px;
+            padding: 0 0.25em;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.52rem;
+            color: var(--cream);
+            letter-spacing: 0;
+        }
+
+        .help-close {
+            position: absolute;
+            top: 0.55rem;
+            right: 0.6rem;
+            background: none;
+            border: none;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.6rem;
+            cursor: pointer;
+            padding: 0.1rem 0.25rem;
+            line-height: 1;
+            transition: color 0.12s;
+        }
+        .help-close:hover { color: var(--amber); }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="wordmark">midi<span class="arrow"> → </span>mqtt</div>
+    <div class="header-divider"></div>
+    <div class="status-row">
+        <div class="pill" id="pill-midi">
+            <div class="dot"></div><span>midi</span>
+        </div>
+        <div class="pill" id="pill-mqtt">
+            <div class="dot"></div><span>mqtt</span>
+        </div>
+    </div>
+</header>
+
+<div class="main">
+    <!-- Left: lights + keyboard -->
+    <div class="left-col">
+        <div class="lights-area">
+            <div class="section-label">Light Zones</div>
+            <div class="lights-grid" id="lights-grid"></div>
+        </div>
+
+        <div class="keyboard-strip">
+            <div class="section-label" style="margin-bottom:0.6rem">Active Notes</div>
+            <div class="piano" id="piano"></div>
+        </div>
+    </div>
+
+    <!-- Right: sidebar -->
+    <div class="sidebar">
+        <div class="controls-panel">
+            <div class="section-label">Configuration</div>
+
+            <div class="ctrl-group">
+                <div class="label-row">
+                    <span>MIDI Input Device</span>
+                    <button class="help-btn" id="help-trigger" title="Setup help">?</button>
+                </div>
+                <select id="device-select">
+                    <option value="">— scanning… —</option>
+                </select>
+            </div>
+
+            <div class="ctrl-group">
+                <div class="label-row">
+                    <span>MIDI Output Device (virtual keyboard)</span>
+                    <button class="help-btn" id="help-trigger-out" title="Setup help">?</button>
+                </div>
+                <select id="output-select">
+                    <option value="">— scanning… —</option>
+                </select>
+            </div>
+
+            <div class="ctrl-group">
+                <label>MIDI File Path (server-side)</label>
+                <input type="text" id="midi-path" placeholder="/path/to/file.mid">
+            </div>
+
+            <div class="ctrl-group">
+                <button class="btn primary" id="play-btn">▶  Play MIDI File</button>
+            </div>
+        </div>
+
+        <div class="log-panel">
+            <div class="log-header">
+                <span class="section-label" style="margin:0">Event Log</span>
+                <button class="log-clear-btn" id="clear-btn">clear</button>
+            </div>
+            <div class="log-entries" id="log-entries"></div>
+            <div class="pedal-bar">
+                <div class="pedal-dot" id="pedal-dot"></div>
+                <span id="pedal-label">sustain up</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="help-popover" class="help-popover" hidden>
+    <div class="help-accent"></div>
+    <div class="help-body">
+        <button class="help-close" id="help-close">✕</button>
+        <div class="help-title">No MIDI devices?</div>
+
+        <div class="help-section">Browser requirement</div>
+        <p class="help-note">Web MIDI requires <strong style="color:var(--cream)">Chrome or Edge</strong> on desktop. Firefox and Safari are not supported.</p>
+
+        <div class="help-section">macOS — IAC Driver</div>
+        <ol class="help-steps">
+            <li data-n="1">Press <kbd>⌘ Space</kbd>, search <strong style="color:var(--cream)">Audio MIDI Setup</strong></li>
+            <li data-n="2">Click <strong style="color:var(--cream)">Window → Show MIDI Studio</strong></li>
+            <li data-n="3">Double-click <strong style="color:var(--cream)">IAC Driver</strong></li>
+            <li data-n="4">Check <strong style="color:var(--cream)">Device is online</strong> → Apply</li>
+            <li data-n="5">Add a second bus with <kbd>+</kbd> if needed — Bus 1 for GarageBand, Bus 2 for loopback</li>
+            <li data-n="6">Reload this page</li>
+        </ol>
+
+        <div class="help-section">Keyboard input</div>
+        <p class="help-note">Open GarageBand and select your keyboard as the MIDI input. GarageBand routes notes through the IAC bus to this app.</p>
+    </div>
+</div>
+
 <script src="webmidi.min.js"></script>
-<script src="web-midi.js"></script>
+<script>
+'use strict';
 
-<div id="loadmidi" style="background: blue; color: white; width: 150px; height: 50px">Load MIDI File</div>
+// ── Light zone definitions (must match ai_light.js) ───────────────────────
+const ZONES = [
+    { id: 'orb',           zone: 'livingroom', name: 'Orb',             notes: ['C', 'C#'] },
+    { id: 'kgc-main',      zone: 'kitchen',    name: 'Gas Can (main)',   notes: ['D', 'D#'] },
+    { id: 'kgc-nozzle',    zone: 'kitchen',    name: 'Gas Can (nozzle)', notes: ['E'] },
+    { id: 'lr-sculpture',  zone: 'livingroom', name: 'Sculpture',        notes: ['F', 'F#'] },
+    { id: 'lr-gascan',     zone: 'livingroom', name: 'Gas Can',          notes: ['G', 'G#'] },
+    { id: 'shop-gascan',   zone: 'shop',       name: 'Gas Can',          notes: ['A', 'A#'] },
+    { id: 'umbrella',      zone: 'entry',      name: 'Umbrella',         notes: ['B'] },
+];
 
-<script type="text/javascript">
+const WHITE_NOTES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const BLACK_KEYS  = [
+    { note: 'C#', after: 0 },
+    { note: 'D#', after: 1 },
+    { note: 'F#', after: 3 },
+    { note: 'G#', after: 4 },
+    { note: 'A#', after: 5 },
+];
 
+// ── DOM construction ──────────────────────────────────────────────────────
+function buildLights() {
+    const grid = document.getElementById('lights-grid');
+    ZONES.forEach(z => {
+        const card = document.createElement('div');
+        card.className = 'light-card';
+        card.id = 'card-' + z.id;
+        card.innerHTML =
+            `<div class="bulb-icon"></div>` +
+            `<div class="card-zone">${z.zone}</div>` +
+            `<div class="card-name">${z.name}</div>` +
+            `<div class="card-notes">${z.notes.join(' · ')}</div>` +
+            `<div class="card-brightness" id="br-${z.id}">—</div>`;
+        grid.appendChild(card);
+    });
+}
 
+function buildPiano() {
+    const piano = document.getElementById('piano');
+
+    WHITE_NOTES.forEach(n => {
+        const k = document.createElement('div');
+        k.className = 'key-white';
+        k.id = 'key-' + n.replace('#', 's');
+        k.textContent = n;
+        k.addEventListener('mousedown',  () => keyPress(n));
+        k.addEventListener('mouseup',    () => keyRelease(n));
+        k.addEventListener('mouseleave', () => keyRelease(n));
+        k.addEventListener('touchstart', e => { e.preventDefault(); keyPress(n); }, { passive: false });
+        k.addEventListener('touchend',   e => { e.preventDefault(); keyRelease(n); }, { passive: false });
+        piano.appendChild(k);
+    });
+
+    const overlay = document.createElement('div');
+    overlay.className = 'piano-blacks';
+    piano.appendChild(overlay);
+
+    requestAnimationFrame(() => {
+        const whites    = piano.querySelectorAll('.key-white');
+        const pianoRect = piano.getBoundingClientRect();
+
+        BLACK_KEYS.forEach(bk => {
+            const refKey  = whites[bk.after];
+            const nextKey = whites[bk.after + 1];
+            if (!refKey || !nextKey) return;
+
+            const rRef   = refKey.getBoundingClientRect();
+            const rNext  = nextKey.getBoundingClientRect();
+            const center = ((rRef.right + rNext.left) / 2) - pianoRect.left;
+            const width  = rRef.width * 0.55;
+            const note   = bk.note;
+
+            const el = document.createElement('div');
+            el.id = 'key-' + note.replace('#', 's');
+            el.style.cssText = `
+                position:absolute;
+                width:${width}px;
+                height:100%;
+                left:${center - width / 2}px;
+                background:var(--panel);
+                border:1px solid var(--border-hi);
+                border-radius:0 0 2px 2px;
+                transition:background 0.06s, border-color 0.06s, box-shadow 0.06s;
+                display:flex;
+                align-items:flex-end;
+                justify-content:center;
+                padding-bottom:4px;
+                font-size:0.42rem;
+                color:var(--muted);
+                letter-spacing:0.04em;
+                cursor:pointer;
+                user-select:none;
+                pointer-events:auto;
+                z-index:1;
+            `;
+            el.textContent = note;
+            el.addEventListener('mousedown',  e => { e.stopPropagation(); keyPress(note); });
+            el.addEventListener('mouseup',    e => { e.stopPropagation(); keyRelease(note); });
+            el.addEventListener('mouseleave', () => keyRelease(note));
+            el.addEventListener('touchstart', e => { e.preventDefault(); keyPress(note); }, { passive: false });
+            el.addEventListener('touchend',   e => { e.preventDefault(); keyRelease(note); }, { passive: false });
+            overlay.appendChild(el);
+        });
+    });
+}
+
+// ── State helpers ─────────────────────────────────────────────────────────
+function noteToZoneId(note) {
+    const z = ZONES.find(z => z.notes.includes(note));
+    return z ? z.id : null;
+}
+
+function setKeyActive(note, active) {
+    const el = document.getElementById('key-' + note.replace('#', 's'));
+    if (!el) return;
+    if (active) {
+        el.style.background   = 'var(--amber)';
+        el.style.borderColor  = 'var(--amber)';
+        el.style.boxShadow    = '0 0 10px var(--amber-glow2)';
+        el.style.color        = 'var(--bg)';
+    } else {
+        el.style.background  = '';
+        el.style.borderColor = '';
+        el.style.boxShadow   = '';
+        el.style.color       = '';
+    }
+}
+
+function setCardOn(note, brightness) {
+    const id = noteToZoneId(note);
+    if (!id) return;
+    const card = document.getElementById('card-' + id);
+    if (card) {
+        card.classList.add('on');
+        const pct = Math.round((brightness / 255) * 100);
+        document.getElementById('br-' + id).textContent = pct + '%';
+    }
+    setKeyActive(note, true);
+}
+
+function setCardOff(note) {
+    const id = noteToZoneId(note);
+    if (!id) return;
+    const card = document.getElementById('card-' + id);
+    if (card) {
+        card.classList.remove('on');
+        document.getElementById('br-' + id).textContent = '—';
+    }
+    setKeyActive(note, false);
+}
+
+// ── Status pills ──────────────────────────────────────────────────────────
+function setStatus(id, state) {
+    document.getElementById(id).className = 'pill ' + state;
+}
+
+// ── Event log ─────────────────────────────────────────────────────────────
+function log(msg, cls) {
+    const now     = new Date().toTimeString().slice(0, 8);
+    const entries = document.getElementById('log-entries');
+    const row     = document.createElement('div');
+    row.className = 'log-entry';
+    row.innerHTML = `<span class="log-time">${now}</span><span class="log-msg ${cls || ''}">${msg}</span>`;
+    entries.prepend(row);
+    while (entries.children.length > 120) entries.removeChild(entries.lastChild);
+}
+
+document.getElementById('clear-btn').addEventListener('click', () => {
+    document.getElementById('log-entries').innerHTML = '';
+});
+
+// ── Pedal UI ──────────────────────────────────────────────────────────────
+function setPedal(down) {
+    document.getElementById('pedal-dot').className   = 'pedal-dot' + (down ? ' active' : '');
+    document.getElementById('pedal-label').textContent = down ? 'sustain held' : 'sustain up';
+}
+
+// ── Server fetch helpers ──────────────────────────────────────────────────
+function post(endpoint, data) {
+    return fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    }).catch(err => log('fetch error: ' + err.message, 'err'));
+}
+
+function checkMqttStatus() {
+    fetch('/status')
+        .then(r => r.json())
+        .then(d => setStatus('pill-mqtt', d.mqtt_connected ? 'ok' : 'err'))
+        .catch(() => setStatus('pill-mqtt', 'err'));
+}
+
+// ── MIDI file playback ────────────────────────────────────────────────────
+document.getElementById('play-btn').addEventListener('click', () => {
+    const p = document.getElementById('midi-path').value.trim();
+    if (!p) { log('enter a MIDI file path first', 'err'); return; }
+    post('/mqtt/loadmidi', { midi_path: p });
+    log('loading: ' + p, 'sys');
+});
+
+// ── Virtual keyboard output ───────────────────────────────────────────────
+let activeOutput = null;
+let heldKey      = null;
+
+function keyPress(note) {
+    if (!activeOutput) { log('select a MIDI output device to use the virtual keyboard', 'err'); return; }
+    if (heldKey && heldKey !== note) keyRelease(heldKey);
+    heldKey = note;
+    activeOutput.playNote(note + '4', 1, { velocity: 0.8 });
+}
+
+function keyRelease(note) {
+    if (!activeOutput || heldKey !== note) return;
+    heldKey = null;
+    activeOutput.stopNote(note + '4', 1);
+}
+
+// ── WebMidi ───────────────────────────────────────────────────────────────
+let activeInput = null;
+
+function attachListeners(input) {
+    if (activeInput) activeInput.removeListener();
+    activeInput = input;
+    setStatus('pill-midi', 'ok');
+    log('midi: ' + input.name, 'sys');
+
+    input.addListener('noteon', 'all', e => {
+        const brightness = Math.round(e.velocity * 255);
+        setCardOn(e.note.name, brightness);
+        log('on  ' + e.note.name + e.note.octave + '  vel=' + e.velocity.toFixed(2), 'on');
+        post('/mqtt/turnon', { note: { number: e.note.number, name: e.note.name, octave: e.note.octave, velocity: e.velocity } });
+    });
+
+    input.addListener('noteoff', 'all', e => {
+        setCardOff(e.note.name);
+        log('off ' + e.note.name + e.note.octave, 'off');
+        post('/mqtt/turnoff', { note: { number: e.note.number, name: e.note.name, octave: e.note.octave, velocity: e.velocity } });
+    });
+
+    input.addListener('pitchbend', 'all', e => {
+        log('pitch ' + e.value.toFixed(3));
+        post('/mqtt/pitchbend', { bend_value: e.value });
+    });
+
+    input.addListener('controlchange', 'all', e => {
+        const name = e.controller.name;
+        log('cc: ' + name + ' = ' + e.value);
+        if (name === 'holdpedal') setPedal(parseInt(e.value) > 0);
+        post('/mqtt/controlchange', {
+            control: {
+                controller: { name: e.controller.name, number: e.controller.number },
+                value: e.value,
+                channel: e.channel,
+            },
+        });
+    });
+}
+
+document.getElementById('device-select').addEventListener('change', function () {
+    const name = this.value;
+    if (!name) { setStatus('pill-midi', ''); return; }
+    const input = WebMidi.getInputByName(name);
+    if (input) {
+        attachListeners(input);
+    } else {
+        setStatus('pill-midi', 'err');
+        log('device not found: ' + name, 'err');
+    }
+});
+
+document.getElementById('output-select').addEventListener('change', function () {
+    activeOutput = this.value ? WebMidi.getOutputByName(this.value) : null;
+});
+
+WebMidi.enable(err => {
+    if (err) {
+        setStatus('pill-midi', 'err');
+        log('WebMidi error: ' + err, 'err');
+        document.getElementById('device-select').innerHTML = '<option value="">— WebMidi unavailable —</option>';
+        return;
+    }
+
+    const sel = document.getElementById('device-select');
+    sel.innerHTML = '';
+
+    if (!WebMidi.inputs.length) {
+        sel.innerHTML = '<option value="">— no devices found —</option>';
+        setStatus('pill-midi', 'err');
+        log('no MIDI input devices found', 'err');
+        return;
+    }
+
+    WebMidi.inputs.forEach(inp => {
+        const opt = document.createElement('option');
+        opt.value = inp.name;
+        opt.textContent = inp.name;
+        if (inp.name.includes('IAC') && inp.name.includes('2')) opt.selected = true;
+        sel.appendChild(opt);
+    });
+
+    const name = sel.value;
+    if (name) {
+        const input = WebMidi.getInputByName(name);
+        if (input) attachListeners(input);
+    }
+
+    const outSel = document.getElementById('output-select');
+    outSel.innerHTML = '<option value="">— none —</option>';
+    WebMidi.outputs.forEach(out => {
+        const opt = document.createElement('option');
+        opt.value = out.name;
+        opt.textContent = out.name;
+        if (out.name === sel.value) opt.selected = true;
+        outSel.appendChild(opt);
+    });
+    if (outSel.value) activeOutput = WebMidi.getOutputByName(outSel.value);
+});
+
+// ── Help popover ──────────────────────────────────────────────────────────
+(function () {
+    const popover  = document.getElementById('help-popover');
+    const triggers = [
+        document.getElementById('help-trigger'),
+        document.getElementById('help-trigger-out'),
+    ];
+
+    function show(btn) {
+        const rect  = btn.getBoundingClientRect();
+        const right = window.innerWidth - rect.right;
+        const top   = rect.bottom + 6;
+        popover.style.right = right + 'px';
+        popover.style.top   = top + 'px';
+        popover.style.left  = '';
+        popover.hidden = false;
+        triggers.forEach(t => t.classList.toggle('active', t === btn));
+    }
+
+    function hide() {
+        popover.hidden = true;
+        triggers.forEach(t => t.classList.remove('active'));
+    }
+
+    triggers.forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            popover.hidden ? show(btn) : hide();
+        });
+    });
+
+    document.getElementById('help-close').addEventListener('click', hide);
+    document.addEventListener('click', e => { if (!popover.hidden && !popover.contains(e.target)) hide(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') hide(); });
+}());
+
+// ── Init ──────────────────────────────────────────────────────────────────
+buildLights();
+buildPiano();
+checkMqttStatus();
+log('ready', 'sys');
+setInterval(checkMqttStatus, 10000);
 </script>
+</body>
+</html>

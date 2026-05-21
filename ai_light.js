@@ -1,186 +1,153 @@
-var mqtt = require('mqtt');
+'use strict';
+
+const mqtt = require('mqtt');
 const util = require('util');
-var url = require('url');
+const url  = require('url');
 
-var mqtt_uri = util.format('%s://%s:%s@%s:%s', 
-                process.env.MQTT_PROTOCOL,
-                process.env.MQTT_USERNAME,
-                process.env.MQTT_PASSWORD,
-                process.env.MQTT_HOST,
-                process.env.MQTT_PORT);
+const mqttUri = url.parse(util.format('%s://%s:%s@%s:%s',
+    process.env.MQTT_PROTOCOL,
+    process.env.MQTT_USERNAME,
+    process.env.MQTT_PASSWORD,
+    process.env.MQTT_HOST,
+    process.env.MQTT_PORT));
 
-var mqtt_uri = url.parse(mqtt_uri);
-console.log("About to connect");
-mqtt_client  = mqtt.connect(mqtt_uri);
-mqtt_client.publish("midi2mqtt","Connected");
+const mqttClient = mqtt.connect(mqttUri);
 
-currentlyOn = new Set();
-allLights = new Set();
-pendingOffLights = new Set();
+let mqttConnected = false;
 
-pedalDown = false;
+mqttClient.on('connect', () => {
+    mqttConnected = true;
+    mqttClient.publish('midi2mqtt', 'Connected');
+    console.log('MQTT connected');
+});
 
+mqttClient.on('error', err => {
+    mqttConnected = false;
+    console.error('MQTT error:', err.message);
+});
+
+mqttClient.on('close', () => { mqttConnected = false; });
+
+// ── Shared light state ────────────────────────────────────────────────────
+const currentlyOn      = new Set();
+const allLights        = new Set();
+const pendingOffLights = new Set();
+let pedalDown = false;
+
+function publish(topic, payload) {
+    mqttClient.publish(topic, JSON.stringify(payload));
+}
+
+// ── Light state machine ───────────────────────────────────────────────────
+function OnState(light, brightness) {
+    this.go = function () {
+        pendingOffLights.delete(light);
+        publish(light.mqttSetTopic, { state: 'ON', brightness });
+        currentlyOn.add(light);
+        console.log('on:', light.name, 'brightness:', brightness);
+    };
+    this.setBrightness = function (b) {
+        publish(light.mqttSetTopic, { brightness: b });
+    };
+    this.setColorTemperature = function (temp) {
+        publish(light.mqttSetTopic, { color_temp: temp });
+    };
+}
+
+function OffState(light) {
+    this.go = function () {
+        publish(light.mqttSetTopic, { state: 'OFF' });
+        currentlyOn.delete(light);
+        console.log('off:', light.name);
+    };
+}
+
+function RequestingOffState(light) {
+    this.go = function () {
+        if (!pedalDown) {
+            light.setState(new OffState(light));
+        } else {
+            pendingOffLights.add(light);
+        }
+    };
+}
+
+// ── AiLight ───────────────────────────────────────────────────────────────
 function AiLight(zone, name) {
-	this.name = name;
-	this.zone = zone;
+    this.name = name;
+    this.zone = zone;
+    this.mqttSetTopic = util.format('home/%s/light/%s/set', zone, name);
 
-	allLights.add(this);
+    allLights.add(this);
 
-	this.mqtt_base_topic = util.format('home/%s/light/%s', this.zone, this.name);
-	this.mqtt_set_topic = util.format('%s/set', this.mqtt_base_topic);
+    let currentState = new OffState(this);
 
-	var currentState = new OffLight(this);
+    this.setState = function (state) {
+        currentState = state;
+        currentState.go();
+    };
 
-	this.setState = function(state) {
-		currentState = state;
-		currentState.go();
-	}
+    this.turn_on = function (brightness) {
+        this.setState(new OnState(this, brightness));
+    };
 
-	this.turn_on = function(brightness) {
-		this.setState(new OnLight(this, brightness));
-	}
+    this.turn_off = function () {
+        this.setState(new RequestingOffState(this));
+    };
 
-	this.turn_off = function() {
-		this.setState(new RequestingOffLight(this));
-	}
+    this.setBrightness = function (b) {
+        if (currentState.setBrightness) currentState.setBrightness(b);
+    };
 
-	this.setBrightness = function(brightness) {
-		currentState.setBrightness(brightness);
-	}
-
-	this.setColorTemperature = function(temp) {
-		currentState.setColorTemperature(temp);
-	}
+    this.setColorTemperature = function (temp) {
+        if (currentState.setColorTemperature) currentState.setColorTemperature(temp);
+    };
 }
 
-function RequestingOffLight(light) {
-	this.light = light;
-
-	this.go = function() {
-		if (!pedalDown) light.setState(new OffLight(light));
-		else pendingOffLights.add(light);
-	}
-}
-
-function AwaitingOffLight(light) {
-	this.light = light;
-
-	this.turn_on = function(brightness) {
-		console.log("turning on " + light.name);
-		mqtt_client.publish(light.mqtt_set_topic, "{'state':'ON','brightness':" + brightness + "}");
-		currentlyOn.add(light);
-	}
-	this.turn_off = function() {
-		console.log("Not turning off because light is now a 'Hold' light");
-	}
-	this.setBrightness = function(brightness) {
-		mqtt_client.publish(light.mqtt_set_topic, "{'brightness':'" + brightness + "'}");
-		console.log("setting brightness of " + light.name + " to " + brightness);
-	}
-	this.setColorTemperature = function(temp) {
-		mqtt_client.publish(light.mqtt_set_topic, "{'color_temp':'" + temp + "'}");
-		console.log("setting color temperature of " + light.name + " to " + temp);
-	}
-}
-
-function OnLight(light, brightness) {
-	this.light = light;
-	this.brightness = brightness;
-
-	this.go = function() {
-		console.log("turning on " + light.name);
-		if (pendingOffLights.has(light)) pendingOffLights.delete(light);
-		mqtt_client.publish(light.mqtt_set_topic, "{'state':'ON','brightness':" + brightness + "}");
-		currentlyOn.add(light);
-	}
-	
-	this.setBrightness = function(brightness) {
-		mqtt_client.publish(light.mqtt_set_topic, "{'brightness':'" + brightness + "'}");
-		console.log("setting brightness of " + light.name + " to " + brightness);
-	}
-	this.setColorTemperature = function(temp) {
-		mqtt_client.publish(light.mqtt_set_topic, "{'color_temp':'" + temp + "'}");
-		console.log("setting color temperature of " + light.name + " to " + temp);
-	}
-}
-
-function OffLight(light) {
-	this.light = light;
-
-	this.go = function() {
-		console.log("turning off " + light.name);
-		mqtt_client.publish(light.mqtt_set_topic, "{'state':'OFF'}");
-		currentlyOn.delete(light);
-	}
-}
-
+// ── AiLights (collection) ─────────────────────────────────────────────────
 function AiLights() {
-	this.Orb = new AiLight("livingroom","orb");
-	this.KitchenGasCanNozzle = new AiLight("kitchen","gascan/nozzle");
-	this.KitchenGasCanMain = new AiLight("kitchen","gascan/main");
-	this.LivingRoomGasCan = new AiLight("livingroom","gascan");
-	this.LivingRoomSculpture = new AiLight("livingroom","sculpture");
-	this.ShopGasCan = new AiLight("shop","gascan");
-	this.EntryUmbrella = new AiLight("entry","umbrella");
+    this.Orb               = new AiLight('livingroom', 'orb');
+    this.KitchenGasCanMain   = new AiLight('kitchen',    'gascan/main');
+    this.KitchenGasCanNozzle = new AiLight('kitchen',    'gascan/nozzle');
+    this.LivingRoomSculpture = new AiLight('livingroom', 'sculpture');
+    this.LivingRoomGasCan    = new AiLight('livingroom', 'gascan');
+    this.ShopGasCan          = new AiLight('shop',       'gascan');
+    this.EntryUmbrella       = new AiLight('entry',      'umbrella');
 
-	this.lightForNote = function(note) {
-		console.log("lightfornote: " + note);
-		switch (note) {
-			case "C":
-			case "C#": return this.Orb;
-			case "D": 
-			case "D#": return this.KitchenGasCanMain;
-			case "E": return this.KitchenGasCanNozzle;
-			case "F": 
-			case "F#": return this.LivingRoomSculpture;
-			case "G": 
-			case "G#": return this.LivingRoomGasCan;
-			case "A": 
-			case "A#": return this.ShopGasCan;
-			case "B": return this.EntryUmbrella;
-		}
-	}
+    this.lightForNote = function (note) {
+        switch (note) {
+            case 'C':  case 'C#': return this.Orb;
+            case 'D':  case 'D#': return this.KitchenGasCanMain;
+            case 'E':             return this.KitchenGasCanNozzle;
+            case 'F':  case 'F#': return this.LivingRoomSculpture;
+            case 'G':  case 'G#': return this.LivingRoomGasCan;
+            case 'A':  case 'A#': return this.ShopGasCan;
+            case 'B':             return this.EntryUmbrella;
+            default:              return null;
+        }
+    };
 
-	this.setPedalState = function(pedalState) {
-		pedalDown = pedalState;
-	}
-	this.setTempForOnLights = function(temp) {
-		currentlyOn.forEach(function(light) {
-			light.setColorTemperature(temp);
-		});
-	}
-	this.setBrightnessForOnLights = function(brightness) {
-		currentlyOn.forEach(function(light) {
-			light.setBrightness(brightness);
-		});
-	}
+    this.setPedalState = function (down) { pedalDown = down; };
 
-	this.turnOffAllPendingOffLights = function() {
-		pendingOffLights.forEach(function(light) {
-			light.turn_off();
-		});
-		pendingOffLights = new Set();
-	}
+    this.turnOffAllPendingOffLights = function () {
+        pendingOffLights.forEach(l => l.turn_off());
+        pendingOffLights.clear();
+    };
 
-	this.setAllLightsToHoldLights = function() {
-		allLights.forEach(function(light) {
-			light.setState(new HoldLight(light));
-		});
-	}
+    this.setBrightnessForOnLights = function (brightness) {
+        currentlyOn.forEach(l => l.setBrightness(brightness));
+    };
 
-	this.setAllLightsToNormalLights = function() {
-		allLights.forEach(function(light) {
-			light.setState(new NormalLight(light));
-		});
-	}
+    this.setTempForOnLights = function (temp) {
+        currentlyOn.forEach(l => l.setColorTemperature(temp));
+    };
 
-	this.disconnect = function() {
-		mqtt_client.publish("midi2mqtt","Disconnecting");
-		console.log("Disconnecting...");
-		mqtt_client.end();
-	}
+    this.isConnected = function () { return mqttConnected; };
+
+    this.disconnect = function () {
+        mqttClient.publish('midi2mqtt', 'Disconnecting');
+        mqttClient.end();
+    };
 }
-
-
 
 module.exports = AiLights;

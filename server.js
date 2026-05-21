@@ -1,138 +1,118 @@
-require('dotenv').config()
-const express = require('express')
-const app = express()
-const path = require('path')
-var AiLights = require("./ai_light");
-var bodyParser = require('body-parser');
-var noteStream = require("web-midi-note-stream");
-var midiStream = require('web-midi');
-var stdout = require("stdout");
-var MidiPlayer = require('midi-player-js');
+'use strict';
 
- // Initialize player and register event handler
-var Player = new MidiPlayer.Player(function(event) {
-	console.log(event);
+require('dotenv').config();
+
+const express    = require('express');
+const bodyParser = require('body-parser');
+const path       = require('path');
+const MidiPlayer = require('midi-player-js');
+const AiLights   = require('./ai_light');
+
+const app    = express();
+const lights = new AiLights();
+
+// ── MIDI file player ──────────────────────────────────────────────────────
+const Player = new MidiPlayer.Player(function (event) {
+    if (!event.name || !event.noteName) return;
+
+    const note = event.noteName.replace(/[0-9]+$/, '').trim();
+    const light = lights.lightForNote(note);
+    if (!light) return;
+
+    if (event.name === 'Note on' && event.velocity > 0) {
+        const brightness = Math.round((event.velocity / 127) * 255);
+        light.turn_on(brightness);
+    } else if (event.name === 'Note off' || (event.name === 'Note on' && event.velocity === 0)) {
+        light.turn_off();
+    }
 });
 
+// ── Middleware ────────────────────────────────────────────────────────────
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(express.static('node_modules/webmidi'));
+app.use(express.static('javascript'));
 
-var api_call_count = 0;
-
-lights = new AiLights();
-
-app.use(bodyParser.urlencoded({ extended: true })); 
-app.use(bodyParser.json())
-app.use(express.static("node_modules/webmidi"));
-app.use(express.static("javascript"));
-
-Number.prototype.map = function (in_min, in_max, out_min, out_max) {
-  return (this - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+// ── Utility ───────────────────────────────────────────────────────────────
+function mapRange(value, inMin, inMax, outMin, outMax) {
+    return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
 }
 
-app.listen(3000, function () {
-  console.log('Example app listening on port 3000!')
-})
-
-app.get('/', function (req, res) {
-    res.sendFile(path.join(__dirname + '/index.html'));
-})
-
-app.post('/mqtt/loadmidi', function(req, res) {
-    // Listen to all button presses, parse them, log to console 
-    // midiStream("Launchpad")
-    //     .pipe(noteStream())
-    //     .pipe(stdout("Note:"));
-    midifile = req.body.midi_path;
-    Player.loadFile(midifile);
-    Player.play();
-
-    res.send('Turning on ' + light.name + 'from note ' + req.body.note.name);
+// ── Routes ────────────────────────────────────────────────────────────────
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.post('/mqtt/turnon', function(req, res) {
-    light = lights.lightForNote(req.body.note.name);
-    brightness=Math.round(req.body.note.velocity.map(0,1,0,255));
+app.get('/status', (req, res) => {
+    res.json({ mqtt_connected: lights.isConnected() });
+});
+
+app.post('/mqtt/loadmidi', (req, res) => {
+    const midifile = req.body.midi_path;
+    if (!midifile) return res.status(400).send('midi_path required');
+    try {
+        Player.loadFile(midifile);
+        Player.play();
+        res.send('Playing: ' + midifile);
+    } catch (err) {
+        res.status(400).send('Could not load file: ' + err.message);
+    }
+});
+
+app.post('/mqtt/turnon', (req, res) => {
+    const light = lights.lightForNote(req.body.note.name);
+    if (!light) return res.status(400).send('unknown note: ' + req.body.note.name);
+    const brightness = Math.round(mapRange(req.body.note.velocity, 0, 1, 0, 255));
     light.turn_on(brightness);
-
-    res.send('Turning on ' + light.name + 'from note ' + req.body.note.name);
+    res.send('on: ' + light.name);
 });
 
-app.post('/mqtt/turnoff', function(req, res) {
-    light = lights.lightForNote(req.body.note.name);
+app.post('/mqtt/turnoff', (req, res) => {
+    const light = lights.lightForNote(req.body.note.name);
+    if (!light) return res.status(400).send('unknown note: ' + req.body.note.name);
     light.turn_off();
-    res.send('Turning off ' + light.name + 'from note ' + req.body.note.name);
+    res.send('off: ' + light.name);
 });
 
-app.post('/mqtt/pitchbend', function(req, res) {
-    var raw_value = parseFloat(req.body.bend_value);
-    var bend_value = (raw_value + 1)/2;
-
-    var brightness = Math.round(bend_value * 255);
-
-    // if (api_call_count++%5==0 || raw_value == 0.0 || Math.abs(raw_value) > 0.95) { 
-    //     lights.setBrightnessForOnLights(brightness);
-    //     api_call_count = 1;
-    // }
-
-    res.send('Pitch value found: "' + brightness + '".');
+app.post('/mqtt/pitchbend', (req, res) => {
+    const raw = parseFloat(req.body.bend_value);
+    const brightness = Math.round(((raw + 1) / 2) * 255);
+    // lights.setBrightnessForOnLights(brightness); // uncomment to enable
+    res.send('bend: ' + brightness);
 });
 
-app.post('/mqtt/controlchange', function(req, res) {
-    var controlName = req.body.control.controller.name;
-    var raw_value = req.body.control.value;
-    var mapped_value = Math.round(raw_value.map(0,127,154,500));
-    console.log("mapped value in control change: " + mapped_value);
-    switch (controlName) {
-        // case "volumecoarse": 
-        //     lights.setTempForOnLights(mapped_value); 
-        //     break;
-        // case "modulationwheelcoarse": 
-        //     //lights.set
-        //     break;
-        case "holdpedal": 
-            if (parseInt(req.body.control.value) > 0) {
-                lights.setPedalState(true);
-                console.log("Pedal depressed");
-                //lights.setAllLightsToHoldLights();
-            } else {
-                lights.setPedalState(false);
-                lights.turnOffAllPendingOffLights();
-                console.log("Pedal released");
-                // lights.setAllLightsToNormalLights();
-                // lights.turnOffAllLights();
-            }
-                
+app.post('/mqtt/controlchange', (req, res) => {
+    const name  = req.body.control.controller.name;
+    const value = parseInt(req.body.control.value, 10);
+
+    switch (name) {
+        case 'holdpedal':
+            lights.setPedalState(value > 0);
+            if (value === 0) lights.turnOffAllPendingOffLights();
             break;
+        // case 'volumecoarse':
+        //     lights.setTempForOnLights(Math.round(mapRange(value, 0, 127, 154, 500)));
+        //     break;
     }
-    
-    
-    res.send('Pitch value found: "' + controlName + '".');
+
+    res.send('cc: ' + name);
 });
 
-// function normalizeNumberToRange(valueToConvert,minForValue,maxForValue,adjustmentRangeMin,adjustmentRangeMax) {
-
-// }
-
-process.stdin.resume();//so the program will not close instantly
-
-function exitHandler(options, err) {
-    if (options.cleanup) {
-        console.log('In exitHandler (cleanup)');
-    }
-    if (err) {
-        console.log("In exitHandler (err): " + err);
-    }
-    if (options.exit) {
-        console.log("In exitHandler (exit): " + err);
-        process.exit();
-    }
-
+// ── Start ─────────────────────────────────────────────────────────────────
+function listen(port) {
+    const server = app.listen(port, () =>
+        console.log('midi2mqtt listening on http://localhost:' + port));
+    server.on('error', err => {
+        if (err.code === 'EADDRINUSE') {
+            console.log('port ' + port + ' in use, trying ' + (port + 1));
+            listen(port + 1);
+        } else {
+            throw err;
+        }
+    });
 }
+listen(3000);
 
-//do something when app is closing
-process.on('exit', exitHandler.bind(null,{cleanup:true}));
-
-//catches ctrl+c event
-process.on('SIGINT', exitHandler.bind(null, {exit:true}));
-
-//catches uncaught exceptions
-process.on('uncaughtException', exitHandler.bind(null, {exit:true}));
+process.stdin.resume();
+process.on('SIGINT', () => { lights.disconnect(); process.exit(0); });
+process.on('uncaughtException', err => { console.error('uncaught:', err); process.exit(1); });
